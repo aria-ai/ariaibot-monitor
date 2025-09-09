@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: health-monitor
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/status
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: 10000
