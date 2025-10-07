@@ -10,7 +10,9 @@ import json
 
 
 class HealthMonitor:
-    def __init__(self):
+    def __init__(self, name, url):
+        self.name = name
+        self.url = url
         self.health_history = []
         self.current_status = "Unknown"
         self.last_check = None
@@ -19,9 +21,7 @@ class HealthMonitor:
     def check_health(self):
         """Check the health of the target API"""
         try:
-            with urllib.request.urlopen(
-                "https://ariaibot-2693c651aa05.herokuapp.com/health", timeout=10
-            ) as response:
+            with urllib.request.urlopen(self.url, timeout=10) as response:
                 status_code = response.getcode()
                 if status_code == 200:
                     status = "UP"
@@ -46,7 +46,7 @@ class HealthMonitor:
         if len(self.health_history) > 100:
             self.health_history.pop(0)
 
-        print(f"[{timestamp}] Health check: {status}")
+        print(f"[{timestamp}] {self.name} Health check: {status}")
 
     def start_monitoring(self):
         """Start the background monitoring thread"""
@@ -54,7 +54,7 @@ class HealthMonitor:
             self.monitoring = True
             monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             monitor_thread.start()
-            print("Health monitoring started")
+            print(f"{self.name} health monitoring started")
 
     def _monitor_loop(self):
         """Background loop to check health every minute"""
@@ -89,7 +89,7 @@ class HealthMonitor:
         <!DOCTYPE html>
         <html>
         <head>
-            <title>API Health Monitor</title>
+            <title>{self.name} Health Monitor</title>
             <meta http-equiv="refresh" content="30">
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }}
@@ -127,13 +127,11 @@ class HealthMonitor:
                     const button = document.getElementById('refreshBtn');
                     const loading = document.getElementById('loading');
                     
-                    // Disable button and show loading
                     button.disabled = true;
                     button.textContent = 'Checking...';
                     loading.style.display = 'block';
                     
-                    // Make POST request to trigger health check
-                    fetch('/trigger-health-check', {{
+                    fetch(window.location.pathname + '/trigger', {{
                         method: 'POST',
                         headers: {{
                             'Content-Type': 'application/json',
@@ -141,12 +139,10 @@ class HealthMonitor:
                     }})
                     .then(response => {{
                         if (response.ok) {{
-                            // Wait 2 seconds then refresh the page
                             setTimeout(() => {{
                                 window.location.reload();
                             }}, 2000);
                         }} else {{
-                            // Re-enable button on error
                             button.disabled = false;
                             button.textContent = 'Manual Health Check';
                             loading.style.display = 'none';
@@ -154,7 +150,6 @@ class HealthMonitor:
                         }}
                     }})
                     .catch(error => {{
-                        // Re-enable button on error
                         button.disabled = false;
                         button.textContent = 'Manual Health Check';
                         loading.style.display = 'none';
@@ -166,7 +161,7 @@ class HealthMonitor:
         <body>
             <div class="container">
                 <div class="status-card">
-                    <h1>Current Status: {self.current_status}</h1>
+                    <h1>{self.name} Status: {self.current_status}</h1>
                     <p>Last checked: {self.last_check or 'Never'}</p>
                     <button id="refreshBtn" class="refresh-btn" onclick="triggerHealthCheck()">Manual Health Check</button>
                     <div id="loading" class="loading">Performing health check...</div>
@@ -186,7 +181,7 @@ class HealthMonitor:
                 </table>
                 
                 <div class="info">
-                    <p><strong>Monitoring:</strong> https://ariaibot-2693c651aa05.herokuapp.com/health</p>
+                    <p><strong>Monitoring:</strong> {self.url}</p>
                     <p><strong>Check Interval:</strong> Every 60 seconds</p>
                     <p><strong>Auto-refresh:</strong> This page refreshes every 30 seconds</p>
                 </div>
@@ -197,52 +192,112 @@ class HealthMonitor:
         return html
 
 
+# Global monitors dictionary
+monitors = {}
+
+
 class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/" or self.path == "/health-status":
+        # Root path - show list of monitors
+        if self.path == "/":
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            html_content = monitor.get_html_page()
-            self.wfile.write(html_content.encode("utf-8"))
-        elif self.path == "/api/status":
-            # JSON API endpoint
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            data = {
-                "current_status": monitor.current_status,
-                "last_check": monitor.last_check,
-                "history_count": len(monitor.health_history),
-            }
-            self.wfile.write(json.dumps(data).encode("utf-8"))
+            
+            links = "".join([
+                f'<li><a href="/{path}">{monitor.name}</a> - <span style="color: {"green" if monitor.current_status == "UP" else "red"}">{monitor.current_status}</span></li>'
+                for path, monitor in monitors.items()
+            ])
+            
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Health Monitor Dashboard</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 40px; background-color: #f8f9fa; }}
+                    .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                    h1 {{ color: #343a40; }}
+                    ul {{ list-style: none; padding: 0; }}
+                    li {{ padding: 15px; margin: 10px 0; background: #f8f9fa; border-radius: 5px; }}
+                    a {{ text-decoration: none; color: #007bff; font-weight: bold; font-size: 18px; }}
+                    a:hover {{ text-decoration: underline; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Health Monitor Dashboard</h1>
+                    <ul>{links}</ul>
+                </div>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode("utf-8"))
+            return
+        
+        # Check if path matches a monitor
+        path_parts = self.path.strip('/').split('/')
+        monitor_path = path_parts[0]
+        
+        if monitor_path in monitors:
+            monitor = monitors[monitor_path]
+            
+            # Handle subpaths
+            if len(path_parts) == 1:
+                # Main monitor page
+                self.send_response(200)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                html_content = monitor.get_html_page()
+                self.wfile.write(html_content.encode("utf-8"))
+            elif len(path_parts) == 2 and path_parts[1] == "api":
+                # JSON API endpoint
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                data = {
+                    "name": monitor.name,
+                    "current_status": monitor.current_status,
+                    "last_check": monitor.last_check,
+                    "history_count": len(monitor.health_history),
+                }
+                self.wfile.write(json.dumps(data).encode("utf-8"))
+            else:
+                self.send_error(404)
         else:
             self.send_error(404)
 
     def do_POST(self):
-        if self.path == "/trigger-health-check":
-            # Trigger an immediate health check
-            try:
-                monitor.check_health()
-                self.send_response(200)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                response_data = {
-                    "status": "success",
-                    "message": "Health check completed",
-                    "current_status": monitor.current_status,
-                    "last_check": monitor.last_check,
-                }
-                self.wfile.write(json.dumps(response_data).encode("utf-8"))
-            except Exception as e:
-                self.send_response(500)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                error_data = {
-                    "status": "error",
-                    "message": f"Health check failed: {str(e)}",
-                }
-                self.wfile.write(json.dumps(error_data).encode("utf-8"))
+        path_parts = self.path.strip('/').split('/')
+        
+        if len(path_parts) == 2 and path_parts[1] == "trigger":
+            monitor_path = path_parts[0]
+            
+            if monitor_path in monitors:
+                monitor = monitors[monitor_path]
+                try:
+                    monitor.check_health()
+                    self.send_response(200)
+                    self.send_header("Content-type", "application/json")
+                    self.end_headers()
+                    response_data = {
+                        "status": "success",
+                        "message": "Health check completed",
+                        "current_status": monitor.current_status,
+                        "last_check": monitor.last_check,
+                    }
+                    self.wfile.write(json.dumps(response_data).encode("utf-8"))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-type", "application/json")
+                    self.end_headers()
+                    error_data = {
+                        "status": "error",
+                        "message": f"Health check failed: {str(e)}",
+                    }
+                    self.wfile.write(json.dumps(error_data).encode("utf-8"))
+            else:
+                self.send_error(404)
         else:
             self.send_error(404)
 
@@ -252,27 +307,41 @@ class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
-    global monitor
-    monitor = HealthMonitor()
-
-    # Start health monitoring
-    monitor.start_monitoring()
+    global monitors
+    
+    # Configure monitors here
+    monitors = {
+        "ariaibot": HealthMonitor(
+            "AriaAI Bot",
+            "https://ariaibot-2693c651aa05.herokuapp.com/health"
+        ),
+        "traderforum": HealthMonitor(
+            "Trader Forum",
+            "https://traders-forum-backend.onrender.com/health/zz"
+        ),
+    }
+    
+    # Start all monitors
+    for monitor in monitors.values():
+        monitor.start_monitoring()
 
     # Start web server
-    # Use PORT environment variable for cloud deployment, default to 8000 for local
     import os
-
     PORT = int(os.environ.get("PORT", 8000))
 
     with socketserver.TCPServer(("", PORT), HealthRequestHandler) as httpd:
         try:
             print(f"Health Monitor Server running on port {PORT}")
             print(f"Local access: http://localhost:{PORT}")
+            print(f"Available monitors:")
+            for path, monitor in monitors.items():
+                print(f"  - /{path} ({monitor.name})")
             print("Press Ctrl+C to stop")
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nShutting down...")
-            monitor.monitoring = False
+            for monitor in monitors.values():
+                monitor.monitoring = False
             httpd.shutdown()
             httpd.server_close()
 
