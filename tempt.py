@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 import json
+import ssl
 
 
 class HealthMonitor:
@@ -21,7 +22,16 @@ class HealthMonitor:
     def check_health(self):
         """Check the health of the target API"""
         try:
-            with urllib.request.urlopen(self.url, timeout=10) as response:
+            # Create SSL context that doesn't verify certificates
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            # Create request with SSL context
+            request = urllib.request.Request(self.url)
+            with urllib.request.urlopen(
+                request, timeout=10, context=ssl_context
+            ) as response:
                 status_code = response.getcode()
                 if status_code == 200:
                     status = "UP"
@@ -203,12 +213,14 @@ class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            
-            links = "".join([
-                f'<li><a href="/{path}">{monitor.name}</a> - <span style="color: {"green" if monitor.current_status == "UP" else "red"}">{monitor.current_status}</span></li>'
-                for path, monitor in monitors.items()
-            ])
-            
+
+            links = "".join(
+                [
+                    f'<li><a href="/{path}">{monitor.name}</a> - <span style="color: {"green" if monitor.current_status == "UP" else "red"}">{monitor.current_status}</span></li>'
+                    for path, monitor in monitors.items()
+                ]
+            )
+
             html = f"""
             <!DOCTYPE html>
             <html>
@@ -234,14 +246,14 @@ class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
             """
             self.wfile.write(html.encode("utf-8"))
             return
-        
+
         # Check if path matches a monitor
-        path_parts = self.path.strip('/').split('/')
+        path_parts = self.path.strip("/").split("/")
         monitor_path = path_parts[0]
-        
+
         if monitor_path in monitors:
             monitor = monitors[monitor_path]
-            
+
             # Handle subpaths
             if len(path_parts) == 1:
                 # Main monitor page
@@ -268,11 +280,11 @@ class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        path_parts = self.path.strip('/').split('/')
-        
+        path_parts = self.path.strip("/").split("/")
+
         if len(path_parts) == 2 and path_parts[1] == "trigger":
             monitor_path = path_parts[0]
-            
+
             if monitor_path in monitors:
                 monitor = monitors[monitor_path]
                 try:
@@ -308,25 +320,24 @@ class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     global monitors
-    
+
     # Configure monitors here
     monitors = {
         "ariaibot": HealthMonitor(
-            "AriaAI Bot",
-            "https://ariaibot-2693c651aa05.herokuapp.com/health"
+            "AriaAI Bot", "https://ariaibot-2693c651aa05.herokuapp.com/health"
         ),
         "traderforum": HealthMonitor(
-            "Trader Forum",
-            "https://traders-forum-backend.onrender.com/health/zz"
+            "Trader Forum", "https://traders-forum-backend.onrender.com/health/zz"
         ),
     }
-    
+
     # Start all monitors
     for monitor in monitors.values():
         monitor.start_monitoring()
 
     # Start web server
     import os
+
     PORT = int(os.environ.get("PORT", 8000))
 
     with socketserver.TCPServer(("", PORT), HealthRequestHandler) as httpd:
