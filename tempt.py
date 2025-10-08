@@ -208,6 +208,14 @@ monitors = {}
 
 class HealthRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
+        # API status endpoint for Railway health checks
+        if self.path == "/api/status":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+            return
+
         # Root path - show list of monitors
         if self.path == "/":
             self.send_response(200)
